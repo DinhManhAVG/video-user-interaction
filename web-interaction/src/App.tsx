@@ -24,6 +24,18 @@ import { format } from "date-fns";
 
 import ErrorBoundary from "./ErrorBoundary";
 
+import { db } from "./firebaseConfig";
+
+import {
+  collection,
+  query,
+  orderBy,
+  limit,
+  onSnapshot,
+  where,
+  getDocs,
+} from "firebase/firestore";
+
 const BACKEND_API_URL = "http://localhost:3001/api";
 
 const VideoInfoBox = styled(Box)(({ theme }) => ({
@@ -76,6 +88,44 @@ type RecommendedVideo = {
   [key: string]: unknown;
 };
 
+const fetchVideoDetails = async (
+  videoIds: string[]
+): Promise<Map<string, SRSVideoDetails>> => {
+  const videoDetailsMap = new Map<string, SRSVideoDetails>();
+  if (videoIds.length === 0) {
+    return videoDetailsMap;
+  }
+
+  const batches = [];
+  for (let i = 0; i < videoIds.length; i += 10) {
+    batches.push(videoIds.slice(i, i + 10));
+  }
+
+  try {
+    const results = await Promise.all(
+      batches.map((batch) =>
+        getDocs(
+          query(
+            collection(db, "shorts-recommend-system"),
+            where("id", "in", batch)
+          )
+        )
+      )
+    );
+
+    results.forEach((snapshot) => {
+      snapshot.forEach((doc) => {
+        const videoData = doc.data() as SRSVideoDetails;
+        videoDetailsMap.set(videoData.id, videoData);
+      });
+    });
+  } catch (error) {
+    console.error("Error fetching video details:", error);
+  }
+
+  return videoDetailsMap;
+};
+
 function App() {
   const [users, setUsers] = useState<User[]>([]);
   const [selectedUser, setSelectedUser] = useState<string>("");
@@ -121,50 +171,101 @@ function App() {
   }, []);
 
   useEffect(() => {
+    let unsubscribe: () => void = () => {};
+
     if (selectedUser) {
       setActiveView("none");
       setInteractions([]);
       setRecommendedVideos([]);
       setError(null);
 
-      const fetchInteractions = async (userId: string) => {
-        setLoadingInteractions(true);
-        try {
-          const response = await fetch(
-            `${BACKEND_API_URL}/users/${userId}/interactions`
-          );
-          if (!response.ok) {
-            const errorData = await response
-              .json()
-              .catch(() => ({ message: "Unknown error" }));
-            throw new Error(
-              `HTTP error! status: ${response.status}, message: ${errorData.message}`
+      setLoadingInteractions(true);
+      try {
+        const interactionsCollectionRef = collection(
+          db,
+          "users",
+          selectedUser,
+          "interactions"
+        );
+        const interactionsQuery = query(
+          interactionsCollectionRef,
+          orderBy("time", "desc"),
+          limit(20) // Match backend limit or use a state variable
+        );
+
+        unsubscribe = onSnapshot(
+          interactionsQuery,
+          async (snapshot) => {
+            console.log("Firestore interactions snapshot received");
+            if (snapshot.empty) {
+              setInteractions([]);
+              setLoadingInteractions(false);
+              console.log("No interactions found for user", selectedUser);
+              return; // No interactions, nothing more to do
+            }
+
+            const interactionsData = snapshot.docs.map((doc) => ({
+              interactionId: doc.id,
+              ...(doc.data() as Omit<Interaction, "interactionId" | "video">), // Cast data, omit fields added later
+            }));
+
+            // Collect unique video IDs from interactions
+            const videoIds = [
+              ...new Set(
+                interactionsData.map((interaction) => interaction.videoId)
+              ),
+            ];
+
+            // Fetch video details for these video IDs
+            const videoDetailsMap = await fetchVideoDetails(videoIds);
+
+            // Combine interactions with video details
+            const interactionsWithVideo = interactionsData.map(
+              (interaction) => ({
+                ...interaction,
+                video: videoDetailsMap.get(interaction.videoId) || null, // Add video details
+              })
             );
+
+            setInteractions(interactionsWithVideo);
+            setLoadingInteractions(false); // Data loaded, set loading to false
+          },
+          (firestoreError) => {
+            // Error callback for onSnapshot
+            console.error(
+              `Error listening to interactions for user ${selectedUser}:`,
+              firestoreError
+            );
+            setError((prevError) =>
+              prevError
+                ? `${prevError}\nLỗi realtime khi tải tương tác: ${firestoreError.message}`
+                : `Lỗi realtime khi tải tương tác: ${firestoreError.message}`
+            );
+            setInteractions([]); // Clear interactions on error
+            setLoadingInteractions(false); // Loading finished (with error)
           }
-          const data: Interaction[] = await response.json();
-          setInteractions(data);
-        } catch (error: unknown) {
-          console.error("Error fetching interactions:", error);
-          setError((prevError) =>
-            prevError
-              ? `${prevError}\nLỗi khi tải tương tác: ${
-                  error instanceof Error ? error.message : "Unknown error"
-                }`
-              : `Lỗi khi tải tương tác: ${
-                  error instanceof Error ? error.message : "Unknown error"
-                }`
-          );
-          setInteractions([]);
-        } finally {
-          setLoadingInteractions(false);
-        }
-      };
+        );
+      } catch (error: unknown) {
+        // Catch errors during listener setup (e.g., invalid user ID format)
+        console.error("Error setting up interaction listener:", error);
+        setError((prevError) =>
+          prevError
+            ? `${prevError}\nLỗi khởi tạo listener tương tác: ${
+                error instanceof Error ? error.message : "Unknown error"
+              }`
+            : `Lỗi khởi tạo listener tương tác: ${
+                error instanceof Error ? error.message : "Unknown error"
+              }`
+        );
+        setInteractions([]);
+        setLoadingInteractions(false);
+      }
 
       const fetchRecommendations = async (userId: string) => {
         setLoadingRecommendations(true);
         try {
           const response = await fetch(
-            `${BACKEND_API_URL}/users/${userId}/recommendations?limit=10`
+            `${BACKEND_API_URL}/users/${userId}/recommendations?limit=10` // Keep using backend for external API
           );
           if (!response.ok) {
             const errorData = await response
@@ -195,7 +296,6 @@ function App() {
         }
       };
 
-      fetchInteractions(selectedUser);
       fetchRecommendations(selectedUser);
     } else {
       setActiveView("none");
@@ -203,6 +303,11 @@ function App() {
       setRecommendedVideos([]);
       setError(null);
     }
+
+    return () => {
+      console.log("Cleaning up listener for user:", selectedUser);
+      unsubscribe();
+    };
   }, [selectedUser]);
 
   const handleUserChange = (_event: unknown, value: User | null) => {
@@ -211,6 +316,7 @@ function App() {
 
   const selectedUserDisplayName =
     users.find((u) => u.userId === selectedUser)?.displayName ||
+    selectedUser ||
     "Người dùng không xác định";
 
   return (
@@ -326,7 +432,7 @@ function App() {
                 >
                   Tương tác gần đây của {selectedUserDisplayName}
                 </Typography>
-                {loadingInteractions ? (
+                {loadingInteractions && interactions.length === 0 ? (
                   <Box
                     sx={{ display: "flex", justifyContent: "center", py: 4 }}
                   >
@@ -426,26 +532,48 @@ function App() {
                               )}
                               {interaction.activity === "view" ? (
                                 <Box sx={{ mt: 1 }}>
-                                  {Object.entries(
-                                    JSON.parse(interaction.content)
-                                  ).map(([key, value]) => {
-                                    return (
-                                      <List key={key} sx={{ padding: 0 }}>
-                                        <ListItem sx={{ padding: 0 }}>
-                                          <ListItemText
-                                            primary={<strong>{key}:</strong>}
-                                            secondary={
-                                              <Typography variant="body2">
-                                                {typeof value === "object"
-                                                  ? JSON.stringify(value)
-                                                  : String(value)}
-                                              </Typography>
-                                            }
-                                          />
-                                        </ListItem>
-                                      </List>
-                                    );
-                                  })}
+                                  {(() => {
+                                    try {
+                                      const contentObject = JSON.parse(
+                                        interaction.content
+                                      );
+                                      return Object.entries(contentObject).map(
+                                        ([key, value]) => (
+                                          <List key={key} sx={{ padding: 0 }}>
+                                            <ListItem sx={{ padding: 0 }}>
+                                              <ListItemText
+                                                primary={
+                                                  <strong>{key}:</strong>
+                                                }
+                                                secondary={
+                                                  <Typography variant="body2">
+                                                    {typeof value === "object"
+                                                      ? JSON.stringify(value)
+                                                      : String(value)}
+                                                  </Typography>
+                                                }
+                                              />
+                                            </ListItem>
+                                          </List>
+                                        )
+                                      );
+                                    } catch (e) {
+                                      console.error(
+                                        "Failed to parse interaction content:",
+                                        interaction.content,
+                                        e
+                                      );
+                                      return (
+                                        <Typography
+                                          variant="body2"
+                                          color="error"
+                                        >
+                                          Lỗi phân tích nội dung:{" "}
+                                          {interaction.content}
+                                        </Typography>
+                                      );
+                                    }
+                                  })()}
                                 </Box>
                               ) : (
                                 <Typography
@@ -488,94 +616,113 @@ function App() {
                   </Typography>
                 ) : (
                   <Grid container spacing={2}>
-                    {recommendedVideos.map((video) => (
-                      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                      // @ts-expect-error
-                      <Grid
-                        xs={12}
-                        sm={6}
-                        md={4}
-                        key={
-                          video.video_guid ||
-                          video.title ||
-                          video.url ||
-                          Math.random()
-                        }
-                      >
-                        <Card sx={{ display: "flex", flexDirection: "column" }}>
-                          <CardContent>
-                            <Typography
-                              variant="body1"
-                              sx={{
-                                display: "inline-block",
-                                maxWidth: "150px",
-                                whiteSpace: "nowrap",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                              }}
-                            >
-                              <strong>
-                                {video.title || "Không có tiêu đề"}
-                              </strong>
-                            </Typography>
-                            {video.source && (
+                    {recommendedVideos.map(
+                      (
+                        video,
+                        index
+                      ) => (
+                        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                        // @ts-expect-error // Still need to check why Grid item type is an issue
+                        <Grid
+                          item
+                          xs={12}
+                          sm={6}
+                          md={4}
+                          key={
+                            video.video_guid ||
+                            video.title ||
+                            video.url ||
+                            `rec-${index}`
+                          }
+                        >
+                          <Card
+                            sx={{ display: "flex", flexDirection: "column" }}
+                          >
+                            <CardContent>
                               <Typography
-                                variant="body2"
-                                color="text.secondary"
-                                sx={{ mt: 1 }}
-                              >
-                                Nguồn đề xuất: {video.source}
-                              </Typography>
-                            )}
-                            {typeof video.url === "string" && video.url ? (
-                              <Box
+                                variant="body1"
                                 sx={{
-                                  mt: 2,
-                                  width: "100%",
-                                  display: "flex",
-                                  justifyContent: "center",
+                                  display: "inline-block",
+                                  whiteSpace: "normal", 
+                                  overflowWrap: "break-word",
                                 }}
                               >
-                                <video
-                                  controls
-                                  style={{
-                                    width: "auto",
-                                    height: "auto",
-                                    maxWidth: "100%",
-                                    maxHeight: "300px",
+                                <strong>
+                                  {video.title || "Không có tiêu đề"}
+                                </strong>
+                              </Typography>
+                              {video.source && (
+                                <Typography
+                                  variant="body2"
+                                  color="text.secondary"
+                                  sx={{ mt: 1 }}
+                                >
+                                  Nguồn đề xuất: {video.source}
+                                </Typography>
+                              )}
+                              {/* Add video_guid or other identifiers if available */}
+                              {(video.video_guid || video.url) && (
+                                <Typography
+                                  variant="body2"
+                                  color="text.secondary"
+                                  sx={{ mt: 1 }}
+                                >
+                                  ID/GUID: {video.video_guid || video.url}
+                                </Typography>
+                              )}
+
+                              {typeof video.url === "string" && video.url ? (
+                                <Box
+                                  sx={{
+                                    mt: 2,
+                                    width: "100%",
+                                    display: "flex",
+                                    justifyContent: "center",
                                   }}
                                 >
-                                  <source src={video.url} type="video/mp4" />
-                                  Trình duyệt của bạn không hỗ trợ thẻ video.
-                                </video>
-                              </Box>
-                            ) : (
-                              <Typography
-                                variant="body2"
-                                color="text.secondary"
-                                sx={{ mt: 1 }}
-                              >
-                                Không có URL video hợp lệ để hiển thị.
-                              </Typography>
-                            )}
-                          </CardContent>
-                        </Card>
-                      </Grid>
-                    ))}
+                                  <video
+                                    controls
+                                    style={{
+                                      width: "auto",
+                                      height: "auto",
+                                      maxWidth: "100%",
+                                      maxHeight: "300px",
+                                    }}
+                                  >
+                                    <source src={video.url} type="video/mp4" />
+                                    Trình duyệt của bạn không hỗ trợ thẻ video.
+                                  </video>
+                                </Box>
+                              ) : (
+                                <Typography
+                                  variant="body2"
+                                  color="text.secondary"
+                                  sx={{ mt: 1 }}
+                                >
+                                  Không có URL video hợp lệ để hiển thị.
+                                </Typography>
+                              )}
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                      )
+                    )}
                   </Grid>
                 )}
               </Paper>
             )}
 
             {activeView === "none" &&
-              !loadingInteractions &&
-              !loadingRecommendations && (
+              !loadingInteractions && // Don't show message if interactions are loading
+              !loadingRecommendations &&
+              selectedUser && ( // Only show if a user is selected but no view active
                 <Typography variant="body1" color="text.secondary">
                   Chọn một người dùng và nhấn "Xem Tương tác" hoặc "Xem Đề
                   xuất".
                 </Typography>
               )}
 
+            {/* Show loading spinner only when a user is selected, no view is active, and data is being loaded */}
             {(loadingInteractions || loadingRecommendations) &&
               activeView === "none" &&
               selectedUser && (
