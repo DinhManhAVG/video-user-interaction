@@ -616,97 +616,82 @@ function App() {
                   </Typography>
                 ) : (
                   <Grid container spacing={2}>
-                    {recommendedVideos.map(
-                      (
-                        video,
-                        index
-                      ) => (
-                        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                        // @ts-expect-error // Still need to check why Grid item type is an issue
-                        <Grid
-                          item
-                          xs={12}
-                          sm={6}
-                          md={4}
-                          key={
-                            video.video_guid ||
-                            video.title ||
-                            video.url ||
-                            `rec-${index}`
-                          }
-                        >
-                          <Card
-                            sx={{ display: "flex", flexDirection: "column" }}
-                          >
-                            <CardContent>
+                    {recommendedVideos.map((video, index) => (
+                      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                      // @ts-expect-error // Still need to check why Grid item type is an issue
+                      <Grid
+                        item
+                        xs={12}
+                        sm={6}
+                        md={4}
+                        key={
+                          video.video_guid ||
+                          video.title ||
+                          video.url ||
+                          `rec-${index}`
+                        }
+                      >
+                        <Card sx={{ display: "flex", flexDirection: "column" }}>
+                          <CardContent>
+                            <Typography
+                              variant="body1"
+                              sx={{
+                                display: "inline-block",
+                                maxWidth: "150px",
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              <strong>
+                                {video.title || "Không có tiêu đề"}
+                              </strong>
+                            </Typography>
+                            {video.source && (
                               <Typography
-                                variant="body1"
+                                variant="body2"
+                                color="text.secondary"
+                                sx={{ mt: 1 }}
+                              >
+                                Nguồn đề xuất: {video.source}
+                              </Typography>
+                            )}
+
+                            {typeof video.url === "string" && video.url ? (
+                              <Box
                                 sx={{
-                                  display: "inline-block",
-                                  whiteSpace: "normal", 
-                                  overflowWrap: "break-word",
+                                  mt: 2,
+                                  width: "100%",
+                                  display: "flex",
+                                  justifyContent: "center",
                                 }}
                               >
-                                <strong>
-                                  {video.title || "Không có tiêu đề"}
-                                </strong>
-                              </Typography>
-                              {video.source && (
-                                <Typography
-                                  variant="body2"
-                                  color="text.secondary"
-                                  sx={{ mt: 1 }}
-                                >
-                                  Nguồn đề xuất: {video.source}
-                                </Typography>
-                              )}
-                              {/* Add video_guid or other identifiers if available */}
-                              {(video.video_guid || video.url) && (
-                                <Typography
-                                  variant="body2"
-                                  color="text.secondary"
-                                  sx={{ mt: 1 }}
-                                >
-                                  ID/GUID: {video.video_guid || video.url}
-                                </Typography>
-                              )}
-
-                              {typeof video.url === "string" && video.url ? (
-                                <Box
-                                  sx={{
-                                    mt: 2,
-                                    width: "100%",
-                                    display: "flex",
-                                    justifyContent: "center",
+                                <video
+                                  controls
+                                  style={{
+                                    width: "auto",
+                                    height: "auto",
+                                    maxWidth: "100%",
+                                    maxHeight: "300px",
                                   }}
                                 >
-                                  <video
-                                    controls
-                                    style={{
-                                      width: "auto",
-                                      height: "auto",
-                                      maxWidth: "100%",
-                                      maxHeight: "300px",
-                                    }}
-                                  >
-                                    <source src={video.url} type="video/mp4" />
-                                    Trình duyệt của bạn không hỗ trợ thẻ video.
-                                  </video>
-                                </Box>
-                              ) : (
-                                <Typography
-                                  variant="body2"
-                                  color="text.secondary"
-                                  sx={{ mt: 1 }}
-                                >
-                                  Không có URL video hợp lệ để hiển thị.
-                                </Typography>
-                              )}
-                            </CardContent>
-                          </Card>
-                        </Grid>
-                      )
-                    )}
+                                  <source src={video.url} type="video/mp4" />
+                                  Trình duyệt của bạn không hỗ trợ thẻ video.
+                                </video>
+                              </Box>
+                            ) : (
+                              <Typography
+                                variant="body2"
+                                color="text.secondary"
+                                sx={{ mt: 1 }}
+                              >
+                                Không có URL video hợp lệ để hiển thị.
+                              </Typography>
+                            )}
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                    ))}
                   </Grid>
                 )}
               </Paper>
