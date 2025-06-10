@@ -35,7 +35,7 @@ app.get('/api/users', async (req, res) => {
     // Chỉ trả về id và displayName/email để select box hiển thị
     const userOptions = users.map(user => ({
         userId: user.id,
-        displayName: user.displayName || user.email || user.id // Dùng displayName hoặc email hoặc ID
+        displayName: user.email || user.displayName || user.id // Dùng displayName hoặc email hoặc ID
     }));
 
     res.status(200).json(userOptions);
@@ -121,8 +121,8 @@ app.get('/api/users/:userId/recommendations', async (req, res) => {
     const limit = parseInt(req.query.limit) || 10; // Số lượng đề xuất, mặc định 10
     const simpleFormat = req.query.simple_format !== 'false'; // Mặc định là true
 
-    const apiUrl = `http://209.159.153.54:6565/retrieval-10k?user_id=${userId}&limit=${limit}&simple_format=${simpleFormat}`;
-
+    const apiUrl = `http://209.159.153.54:6565/retrieval-10k?user_id=${userId}&simple_format=${simpleFormat}`;
+    console.log('API URL: ' + apiUrl);
     try {
         const response = await axios.get(apiUrl);
         // Kiểm tra cấu trúc response từ API ngoài
@@ -154,6 +154,68 @@ app.get('/api/users/:userId/recommendations', async (req, res) => {
     }
 });
 
+// --- API Endpoint 4: Lấy tóm tắt tương tác của User theo loại (activity) ---
+app.get('/api/users/:userId/interaction-summary', async (req, res) => {
+    const userId = req.params.userId;
+
+    try {
+        const interactionsRef = db.collection('users').doc(userId).collection('interactions');
+        // Lấy tất cả tương tác để đếm (có thể cần phân trang nếu quá nhiều)
+        const interactionsSnapshot = await interactionsRef.get();
+
+        if (interactionsSnapshot.empty) {
+            return res.status(200).json({}); // Trả về object rỗng
+        }
+
+        const summary = {}; // Map activity type to count
+        interactionsSnapshot.forEach(doc => {
+            const interaction = doc.data();
+            const activity = interaction.activity;
+            if (activity) {
+                summary[activity] = (summary[activity] || 0) + 1;
+            }
+        });
+
+        res.status(200).json(summary); // Trả về object { "like": 10, "view": 100, ... }
+
+    } catch (error) {
+        console.error(`Error fetching interaction summary for user ${userId}:`, error);
+        res.status(500).json({ message: 'Lỗi khi tải tóm tắt tương tác', error: error.message });
+    }
+});
+
+
+// --- API Endpoint 5: Lấy tổng số video theo Category ---
+app.get('/api/video-categories', async (req, res) => {
+    try {
+        const categories = {};
+
+        // WARNING: Đọc TOÀN BỘ collection 'shorts-recommend-system'.
+        // Cách này KHÔNG HIỆU QUẢ và RẤT TỐN KÉM/CHẬM với collection lớn.
+        // Trong môi trường Production, bạn nên duy trì một collection riêng
+        // lưu trữ số lượng theo category và cập nhật bằng Cloud Functions
+        // khi video được thêm/xóa.
+        const videosRef = db.collection('shorts-recommend-system');
+        const snapshot = await videosRef.get();
+
+        if (snapshot.empty) {
+            return res.status(200).json({}); // Trả về object rỗng
+        }
+
+        snapshot.forEach(doc => {
+            const video = doc.data();
+            const category = video.category || 'Unknown'; // Gán category mặc định nếu thiếu
+
+            categories[category] = (categories[category] || 0) + 1;
+        });
+
+        res.status(200).json(categories); // Trả về object { "Kids": 50, "Sports": 120, ... }
+
+    } catch (error) {
+        console.error('Error fetching video categories:', error);
+        res.status(500).json({ message: 'Lỗi khi tải danh mục video', error: error.message });
+    }
+});
 
 // Khởi động server
 app.listen(port, () => {
