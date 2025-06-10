@@ -99,6 +99,7 @@ function App() {
   const [loadingRecommendations, setLoadingRecommendations] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>("none");
+  const [reloadRecommendations, setReloadRecommendations] = useState(0);
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -223,6 +224,32 @@ function App() {
     };
   }, [selectedUser]);
 
+  useEffect(() => {
+    if (selectedUser) {
+      const fetchRecommendations = async (userId: string) => {
+        setLoadingRecommendations(true);
+        try {
+          const response = await fetch(
+            `${BACKEND_API_URL}/users/${userId}/recommendations?limit=10` // Keep using backend for external API
+          );
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: "Unknown error" }));
+            throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.message || JSON.stringify(errorData)}`);
+          }
+          const data: RecommendedVideo[] = await response.json();
+          setRecommendedVideos(data);
+        } catch (error: unknown) {
+          console.error("Error fetching recommendations:", error);
+          setError((prevError) => (prevError ? `${prevError}\nLỗi khi tải đề xuất: ${error instanceof Error ? error.message : "Unknown error"}` : `Lỗi khi tải đề xuất: ${error instanceof Error ? error.message : "Unknown error"}`));
+          setRecommendedVideos([]);
+        } finally {
+          setLoadingRecommendations(false);
+        }
+      };
+      fetchRecommendations(selectedUser);
+    }
+  }, [selectedUser, reloadRecommendations]);
+
   const handleUserChange = (_event: unknown, value: User | null) => {
     setSelectedUser(value ? value.userId : "");
   };
@@ -279,6 +306,9 @@ function App() {
           </Button>
           <Button variant={activeView === "recommendations" ? "contained" : "outlined"} onClick={() => setActiveView("recommendations")} disabled={loadingRecommendations || (recommendedVideos.length === 0 && !loadingRecommendations)}>
             Xem Đề xuất ({loadingRecommendations ? <CircularProgress size={16} sx={{ ml: 1, color: "currentColor" }} /> : recommendedVideos.length})
+          </Button>
+          <Button variant="outlined" onClick={() => setReloadRecommendations((prev) => prev + 1)} disabled={loadingRecommendations}>
+            Reload Đề xuất
           </Button>
         </Stack>
       )}
