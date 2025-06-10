@@ -514,9 +514,8 @@ function Dashboard() {
                         {/* Hiển thị biểu đồ Bar cho Category */}
                         <Box
                           sx={{
-                            width: "100%",
-                            height: 400,
-                            maxWidth: 800,
+                            width: 800,
+                            height: 300,
                             mb: 2,
                           }}
                         >
